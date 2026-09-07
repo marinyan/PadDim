@@ -9,7 +9,7 @@ Vibe codingとかしてるとPCを点けっぱなしにする事が多いです�
 
 ## 起動
 
-`artifacts/installer/PadDim-Setup-0.1.1-win-x64.exe` を実行してインストールします。Windows 10（2004以降）/ 11 のx64向けで、.NET同梱のため別途ランタイムを入れる必要はありません。
+[インストーラーをダウンロード](https://github.com/marinyan/PadDim/releases/download/v0.1.2/PadDim-Setup-0.1.2-win-x64.exe)して実行します。[リリース一覧](https://github.com/marinyan/PadDim/releases)からも取得できます。Windows 10（2004以降）/ 11 のx64向けで、.NET同梱のため別途ランタイムを入れる必要はありません。
 
 - 管理者権限は不要です。初期インストール先は `%LOCALAPPDATA%\Programs\PadDim`。
 - スタートメニューに登録します。デスクトップのショートカットは選択式です。

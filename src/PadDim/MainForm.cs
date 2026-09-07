@@ -44,6 +44,15 @@ public sealed class MainForm : Form
         mode.SelectedIndexChanged += (_, _) => { brightness.Enabled = mode.SelectedIndex != 1; darkness.Enabled = mode.SelectedIndex != 0; };
         var scroll = new Panel { Dock = DockStyle.Fill, AutoScroll = true };
         Controls.Add(scroll);
+        Controls.Add(new Label
+        {
+            Name = "versionLabel",
+            Text = $"v{typeof(MainForm).Assembly.GetName().Version?.ToString(3)}",
+            Dock = DockStyle.Bottom, Height = 24,
+            TextAlign = ContentAlignment.MiddleRight,
+            Padding = new Padding(0, 0, 12, 0),
+            Font = new Font(Font.FontFamily, 8), ForeColor = SystemColors.GrayText
+        });
         var layout = new TableLayoutPanel { Dock = DockStyle.Top, AutoSize = true, Padding = new Padding(22), ColumnCount = 1, RowCount = 14 };
         layout.RowStyles.Clear();
         for (int i = 0; i < 14; i++) layout.RowStyles.Add(new RowStyle(SizeType.AutoSize));
