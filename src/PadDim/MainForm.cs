@@ -87,7 +87,6 @@ public sealed class MainForm : Form
             Restore(temporarilyDisabled.Checked ? "一時的に無効化" : "監視を再開");
         };
         menu.Items.Add(pause);
-        menu.Items.Add("明るさを戻す", null, (_, _) => { Restore("手動復帰"); dimmer.Restore(retry: true); });
         menu.Items.Add("終了", null, (_, _) => { quitting = true; Close(); });
         tray = new NotifyIcon { Icon = Icon, Text = "PadDim — 入力を監視中", ContextMenuStrip = menu, Visible = true };
         tray.DoubleClick += (_, _) => ShowSettings();

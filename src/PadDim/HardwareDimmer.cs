@@ -11,6 +11,7 @@ public sealed class HardwareDimmer : IDisposable
     private int fadeMilliseconds;
     private long generation;
     private bool running;
+    private long retryAfter;
     private volatile int pending;
     private volatile string status = "本体輝度: 待機中（減光時に対応画面を確認）";
     public bool IsDimmed { get { lock (gate) return pending > 0 || (desired && running); } }
@@ -19,7 +20,10 @@ public sealed class HardwareDimmer : IDisposable
     {
         lock (gate)
         {
-            if (!retry && desired == dim && (!dim || percent == level)) return;
+            // A later input can retry failed restoration without a dedicated menu command.
+            // Rate-limit driver calls while a held button repeatedly reports activity.
+            bool retryDue = !dim && pending > 0 && !running && Environment.TickCount64 >= retryAfter;
+            if (!retry && !retryDue && desired == dim && (!dim || percent == level)) return;
             desired = dim; percent = level; fadeMilliseconds = fade; generation++;
             if (!running) { running = true; worker = Task.Run(Process); }
         }
@@ -34,7 +38,7 @@ public sealed class HardwareDimmer : IDisposable
             try
             {
                 var errors = session.Restore();
-                if (errors.Count != 0) status = string.Join(Environment.NewLine, errors) + "\n通知領域の「明るさを戻す」で再試行できます。";
+                if (errors.Count != 0) status = string.Join(Environment.NewLine, errors) + "\n操作すると復元を再試行します。";
                 else if (dim && IsCurrent(version))
                 {
                     status = "本体輝度: 対応画面を確認・変更中…";
@@ -52,6 +56,7 @@ public sealed class HardwareDimmer : IDisposable
             lock (gate)
             {
                 if (generation != version) continue;
+                retryAfter = Environment.TickCount64 + 3000;
                 running = false; return;
             }
         }
