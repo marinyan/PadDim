@@ -1,4 +1,4 @@
-param([string]$Version = '0.1.2')
+param([string]$Version = '0.1.3')
 $ErrorActionPreference = 'Stop'
 $testRoot = [IO.Path]::GetFullPath((Split-Path $PSScriptRoot -Parent))
 $testDir = [IO.Path]::GetFullPath((Join-Path $testRoot 'artifacts/install-verification'))

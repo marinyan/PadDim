@@ -9,7 +9,6 @@ public sealed class MainForm : Form
     private readonly NumericUpDown brightness = new() { Minimum = 0, Maximum = 100, Width = 120 };
     private readonly NumericUpDown fadeSeconds = new() { Minimum = 0, Maximum = 60, Width = 120 };
     private readonly ComboBox mode = new() { DropDownStyle = ComboBoxStyle.DropDownList, Width = 360 };
-    private readonly CheckBox enabled = new() { Text = "自動減光を有効にする", Checked = true, AutoSize = true };
     private readonly CheckBox temporarilyDisabled = new() { Text = "一時的に無効化", AutoSize = true };
     private readonly Label status = new() { AutoSize = true, MaximumSize = new Size(640, 0) };
     private readonly TextBox devices = new() { Multiline = true, ReadOnly = true, ScrollBars = ScrollBars.Vertical, Dock = DockStyle.Fill };
@@ -53,13 +52,12 @@ public sealed class MainForm : Form
             Padding = new Padding(0, 0, 12, 0),
             Font = new Font(Font.FontFamily, 8), ForeColor = SystemColors.GrayText
         });
-        var layout = new TableLayoutPanel { Dock = DockStyle.Top, AutoSize = true, Padding = new Padding(22), ColumnCount = 1, RowCount = 14 };
+        var layout = new TableLayoutPanel { Dock = DockStyle.Top, AutoSize = true, Padding = new Padding(22), ColumnCount = 1, RowCount = 13 };
         layout.RowStyles.Clear();
-        for (int i = 0; i < 14; i++) layout.RowStyles.Add(new RowStyle(SizeType.AutoSize));
+        for (int i = 0; i < 13; i++) layout.RowStyles.Add(new RowStyle(SizeType.AutoSize));
         devices.MinimumSize = new Size(0, 140);
         scroll.Controls.Add(layout);
         layout.Controls.Add(new Label { Text = "操作が止まったら、画面を静かに暗く。", Font = new Font(Font.FontFamily, 17, FontStyle.Bold), AutoSize = true, Margin = new Padding(0, 0, 0, 16) });
-        layout.Controls.Add(enabled);
         layout.Controls.Add(temporarilyDisabled);
         layout.Controls.Add(Row("減光までの無操作時間（秒）", timeout));
         layout.Controls.Add(Row("減光方式", mode));
@@ -88,7 +86,6 @@ public sealed class MainForm : Form
             previewStartAt = 0;
             Restore(temporarilyDisabled.Checked ? "一時的に無効化" : "監視を再開");
         };
-        enabled.CheckedChanged += (_, _) => { previewStartAt = 0; Restore("設定変更"); };
         menu.Items.Add(pause);
         menu.Items.Add("明るさを戻す", null, (_, _) => { Restore("手動復帰"); dimmer.Restore(retry: true); });
         menu.Items.Add("終了", null, (_, _) => { quitting = true; Close(); });
@@ -118,7 +115,7 @@ public sealed class MainForm : Form
             if (calibrateAt != 0 && now >= calibrateAt) { input.Calibrate(); calibrateAt = 0; Restore("中立位置を再取得"); }
             string? source = input.Poll(now);
             if (source is not null) Restore(source);
-            bool monitoring = enabled.Checked && !temporarilyDisabled.Checked;
+            bool monitoring = !temporarilyDisabled.Checked;
             if (!input.Healthy || sessionLocked || !monitoring) Restore(!input.Healthy ? "入力取得不可 — 減光を保留" : "一時停止");
             if (previewStartAt != 0 && now >= previewStartAt)
             {
@@ -138,7 +135,9 @@ public sealed class MainForm : Form
         }
         catch (Exception ex)
         {
-            Restore("監視エラー"); timer.Stop(); enabled.Checked = false;
+            Restore("監視エラー"); timer.Stop(); temporarilyDisabled.Checked = true;
+            temporarilyDisabled.Enabled = false;
+            tray.ContextMenuStrip!.Items[1].Enabled = false;
             devices.Text = $"監視を停止しました。再起動してください。\r\n{ex}";
             status.Text = "監視エラー — 減光を解除しました";
             ShowSettings();
