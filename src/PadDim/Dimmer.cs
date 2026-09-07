@@ -19,11 +19,12 @@ public sealed class Dimmer : IDisposable
         foreach (var shade in shades) shade.Opacity = targetOpacity * progress;
         if (progress >= 1) fadeTimer.Stop();
     };
-    public void Dim(int percent, bool useHardware, int brightnessPercent, int fadeMilliseconds)
+    public void Dim(int percent, bool useHardware, int brightnessPercent, int fadeMilliseconds, bool useOverlayWithHardware = false)
     {
         if (requested) return;
         requested = true;
-        if (useHardware) { hardware.Request(true, brightnessPercent, fadeMilliseconds); return; }
+        if (useHardware) hardware.Request(true, brightnessPercent, fadeMilliseconds);
+        if (useHardware && !useOverlayWithHardware) return;
         try
         {
             fadeStart = Environment.TickCount64; fadeDuration = fadeMilliseconds;

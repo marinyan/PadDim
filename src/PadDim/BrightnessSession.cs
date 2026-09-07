@@ -17,7 +17,8 @@ public sealed class BrightnessSession
     public static uint DimValue(uint minimum, uint maximum, uint original, int percent)
     {
         if (maximum < minimum || original < minimum || original > maximum) throw new ArgumentOutOfRangeException(nameof(original));
-        return Math.Min(original, minimum + (uint)Math.Round((maximum - (double)minimum) * Math.Clamp(percent, 0, 100) / 100));
+        // Scale the usable range above the device minimum from this cycle's original value.
+        return minimum + (uint)Math.Round((original - (double)minimum) * Math.Clamp(percent, 0, 100) / 100);
     }
     public List<string> Dim(IEnumerable<IBrightnessTarget> targets, int percent, Func<bool> stillRequested,
         int fadeMilliseconds = 0, Action<int>? delay = null, Func<long>? clock = null)

@@ -37,11 +37,11 @@ public sealed class MainForm : Form
         try { settings = Settings.Load(); }
         catch (Exception ex) { settings = new(); MessageBox.Show($"設定を読み込めないため初期値で起動します。\n{ex.Message}", "PadDim"); }
         timeout.Value = settings.IdleSeconds; darkness.Value = settings.DimPercent; deadzone.Value = settings.DeadzonePercent;
-        brightness.Value = settings.BrightnessPercent; fadeSeconds.Value = settings.FadeSeconds;
-        mode.Items.AddRange(["モニター本体の輝度（DDC/CI・WMI）", "半透明の黒い画面を重ねる"]);
-        mode.SelectedIndex = settings.UseHardwareBrightness ? 0 : 1;
-        brightness.Enabled = mode.SelectedIndex == 0; darkness.Enabled = mode.SelectedIndex == 1;
-        mode.SelectedIndexChanged += (_, _) => { brightness.Enabled = mode.SelectedIndex == 0; darkness.Enabled = mode.SelectedIndex == 1; };
+        brightness.Value = settings.BrightnessRatioPercent; fadeSeconds.Value = settings.FadeSeconds;
+        mode.Items.AddRange(["モニター本体の輝度（DDC/CI・WMI）", "半透明の黒い画面を重ねる", "本体輝度 ＋ 黒いオーバーレイ"]);
+        mode.SelectedIndex = settings.UseHardwareBrightness ? settings.UseOverlayWithHardware ? 2 : 0 : 1;
+        brightness.Enabled = mode.SelectedIndex != 1; darkness.Enabled = mode.SelectedIndex != 0;
+        mode.SelectedIndexChanged += (_, _) => { brightness.Enabled = mode.SelectedIndex != 1; darkness.Enabled = mode.SelectedIndex != 0; };
         var scroll = new Panel { Dock = DockStyle.Fill, AutoScroll = true };
         Controls.Add(scroll);
         var layout = new TableLayoutPanel { Dock = DockStyle.Top, AutoSize = true, Padding = new Padding(22), ColumnCount = 1, RowCount = 14 };
@@ -54,7 +54,7 @@ public sealed class MainForm : Form
         layout.Controls.Add(temporarilyDisabled);
         layout.Controls.Add(Row("減光までの無操作時間（秒）", timeout));
         layout.Controls.Add(Row("減光方式", mode));
-        layout.Controls.Add(Row("減光後の本体輝度（%）", brightness));
+        layout.Controls.Add(Row("元の輝度に対する割合（%）", brightness));
         layout.Controls.Add(Row("黒い画面の濃さ（%）", darkness));
         layout.Controls.Add(Row("フェードアウト時間（秒）", fadeSeconds));
         layout.Controls.Add(Row("スティックの遊び（%）", deadzone));
@@ -97,7 +97,7 @@ public sealed class MainForm : Form
     private void ApplySensitivity() { input.AxisThreshold = (int)deadzone.Value * 65535 / 100; input.StickDeadzone = (int)deadzone.Value * 32767 / 100; input.Calibrate(); }
     private void SaveSettings()
     {
-        var updated = new Settings { IdleSeconds = (int)timeout.Value, DimPercent = (int)darkness.Value, DeadzonePercent = (int)deadzone.Value, UseHardwareBrightness = mode.SelectedIndex == 0, BrightnessPercent = (int)brightness.Value, FadeSeconds = (int)fadeSeconds.Value };
+        var updated = new Settings { IdleSeconds = (int)timeout.Value, DimPercent = (int)darkness.Value, DeadzonePercent = (int)deadzone.Value, UseHardwareBrightness = mode.SelectedIndex != 1, UseOverlayWithHardware = mode.SelectedIndex == 2, BrightnessRatioPercent = (int)brightness.Value, FadeSeconds = (int)fadeSeconds.Value };
         try { updated.Save(); settings = updated; ApplySensitivity(); Restore("設定を保存しました"); }
         catch (Exception ex) { MessageBox.Show(ex.Message, "設定の保存に失敗しました"); }
     }
@@ -115,10 +115,10 @@ public sealed class MainForm : Form
             {
                 previewStartAt = 0;
                 if (input.Healthy && !sessionLocked && monitoring)
-                { previewUntil = now + (int)fadeSeconds.Value * 1000 + 5000; dimmer.Dim((int)darkness.Value, mode.SelectedIndex == 0, (int)brightness.Value, (int)fadeSeconds.Value * 1000); }
+                { previewUntil = now + (int)fadeSeconds.Value * 1000 + 5000; dimmer.Dim((int)darkness.Value, mode.SelectedIndex != 1, (int)brightness.Value, (int)fadeSeconds.Value * 1000, mode.SelectedIndex == 2); }
             }
             if (previewUntil != 0 && now >= previewUntil) Restore("プレビュー終了");
-            if (previewUntil == 0 && idle.ShouldDim(now, settings.IdleSeconds, monitoring && !sessionLocked && calibrateAt == 0, input.Healthy)) dimmer.Dim(settings.DimPercent, settings.UseHardwareBrightness, settings.BrightnessPercent, settings.FadeSeconds * 1000);
+            if (previewUntil == 0 && idle.ShouldDim(now, settings.IdleSeconds, monitoring && !sessionLocked && calibrateAt == 0, input.Healthy)) dimmer.Dim(settings.DimPercent, settings.UseHardwareBrightness, settings.BrightnessRatioPercent, settings.FadeSeconds * 1000, settings.UseOverlayWithHardware);
             if (now >= nextUi)
             {
                 nextUi = now + 250;

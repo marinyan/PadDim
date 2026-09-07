@@ -1,4 +1,4 @@
-param([string]$IsccPath = '', [string]$Version = '0.1.0')
+param([string]$IsccPath = '', [string]$Version = '0.1.1')
 $ErrorActionPreference = 'Stop'
 $buildRoot = Split-Path $PSScriptRoot -Parent
 Push-Location $buildRoot

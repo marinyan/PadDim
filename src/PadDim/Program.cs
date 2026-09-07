@@ -35,14 +35,14 @@ internal static class Program
                 var session = new BrightnessSession();
                 try
                 {
-                    int level = Math.Max(0, (int)Math.Round((target.Original - target.Minimum) * 100d / (target.Maximum - target.Minimum)) - 5);
+                    const int level = 90; // Small relative dim for the real-device diagnostic.
                     var errors = session.Dim([target], level, () => true, 1000);
                     if (errors.Count > 0) throw new InvalidOperationException(string.Join("; ", errors));
                     var check = BrightnessTargets.Discover([]);
                     try
                     {
                         var found = check.Single(t => t.Name == target.Name);
-                        diagnostics.Add($"変更: {target.Original} → {found.Original} (目標 {level}%)");
+                        diagnostics.Add($"変更: {target.Original} → {found.Original} (元の輝度の約{level}%)");
                         if (found.Original >= target.Original) throw new InvalidOperationException("輝度の低下を確認できませんでした");
                     }
                     finally { foreach (var item in check) item.Dispose(); }

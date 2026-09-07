@@ -43,7 +43,7 @@ public sealed class HardwareDimmer : IDisposable
                     int count = targets.Count;
                     status = "本体輝度: フェードアウト中…";
                     errors = session.Dim(targets, level, () => IsCurrent(version), fade);
-                    status = string.Join(Environment.NewLine, diagnostics.Concat(errors).Prepend(count == 0 ? "本体輝度: 対応画面がありません。DDC/CI設定・接続方式を確認してください。" : $"本体輝度: {count} 件の制御経路 / 減光設定 {level}%"));
+                    status = string.Join(Environment.NewLine, diagnostics.Concat(errors).Prepend(count == 0 ? "本体輝度: 対応画面がありません。DDC/CI設定・接続方式を確認してください。" : $"本体輝度: {count} 件の制御経路 / 元の輝度の約{level}%"));
                 }
                 else status = "本体輝度: 復元済み";
             }
