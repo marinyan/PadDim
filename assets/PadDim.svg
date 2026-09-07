@@ -1,0 +1,8 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="256" height="256" viewBox="0 0 256 256">
+  <rect x="12" y="30" width="232" height="158" rx="26" fill="#192c49"/>
+  <rect x="28" y="46" width="200" height="120" rx="14" fill="#274568"/>
+  <defs><mask id="crescent"><rect width="256" height="256" fill="white"/><circle cx="188" cy="88" r="45" fill="black"/></mask></defs>
+  <circle cx="149" cy="107" r="45" fill="#ffd88c" mask="url(#crescent)"/>
+  <rect x="116" y="184" width="24" height="28" rx="4" fill="#192c49"/>
+  <rect x="76" y="208" width="104" height="16" rx="8" fill="#192c49"/>
+</svg>

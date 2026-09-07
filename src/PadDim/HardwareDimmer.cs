@@ -1,0 +1,66 @@
+namespace PadDim;
+
+// Hardware calls can take hundreds of milliseconds. Serialize them off the input/UI thread.
+public sealed class HardwareDimmer : IDisposable
+{
+    private readonly object gate = new();
+    private readonly BrightnessSession session = new();
+    private Task worker = Task.CompletedTask;
+    private bool desired;
+    private int percent;
+    private int fadeMilliseconds;
+    private long generation;
+    private bool running;
+    private volatile int pending;
+    private volatile string status = "本体輝度: 待機中（減光時に対応画面を確認）";
+    public bool IsDimmed { get { lock (gate) return pending > 0 || (desired && running); } }
+    public string Status => status;
+    public void Request(bool dim, int level = 20, int fade = 3000, bool retry = false)
+    {
+        lock (gate)
+        {
+            if (!retry && desired == dim && (!dim || percent == level)) return;
+            desired = dim; percent = level; fadeMilliseconds = fade; generation++;
+            if (!running) { running = true; worker = Task.Run(Process); }
+        }
+    }
+    private bool IsCurrent(long version) { lock (gate) return generation == version && desired; }
+    private void Process()
+    {
+        while (true)
+        {
+            long version; bool dim; int level; int fade;
+            lock (gate) { version = generation; dim = desired; level = percent; fade = fadeMilliseconds; }
+            try
+            {
+                var errors = session.Restore();
+                if (errors.Count != 0) status = string.Join(Environment.NewLine, errors) + "\n通知領域の「明るさを戻す」で再試行できます。";
+                else if (dim && IsCurrent(version))
+                {
+                    status = "本体輝度: 対応画面を確認・変更中…";
+                    var diagnostics = new List<string>();
+                    var targets = BrightnessTargets.Discover(diagnostics);
+                    int count = targets.Count;
+                    status = "本体輝度: フェードアウト中…";
+                    errors = session.Dim(targets, level, () => IsCurrent(version), fade);
+                    status = string.Join(Environment.NewLine, diagnostics.Concat(errors).Prepend(count == 0 ? "本体輝度: 対応画面がありません。DDC/CI設定・接続方式を確認してください。" : $"本体輝度: {count} 件の制御経路 / 減光設定 {level}%"));
+                }
+                else status = "本体輝度: 復元済み";
+            }
+            catch (Exception ex) { status = $"本体輝度エラー: {ex.Message}"; }
+            pending = session.PendingCount;
+            lock (gate)
+            {
+                if (generation != version) continue;
+                running = false; return;
+            }
+        }
+    }
+    public void Dispose()
+    {
+        Request(false, retry: true);
+        Task current;
+        lock (gate) current = worker;
+        current.GetAwaiter().GetResult();
+    }
+}

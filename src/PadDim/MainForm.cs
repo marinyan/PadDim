@@ -1,0 +1,173 @@
+using Microsoft.Win32;
+
+namespace PadDim;
+public sealed class MainForm : Form
+{
+    private readonly NumericUpDown timeout = new() { Minimum = 10, Maximum = 86400, Increment = 10, Width = 120 };
+    private readonly NumericUpDown darkness = new() { Minimum = 5, Maximum = 90, Increment = 5, Width = 120 };
+    private readonly NumericUpDown deadzone = new() { Minimum = 1, Maximum = 40, Width = 120 };
+    private readonly NumericUpDown brightness = new() { Minimum = 0, Maximum = 100, Width = 120 };
+    private readonly NumericUpDown fadeSeconds = new() { Minimum = 0, Maximum = 60, Width = 120 };
+    private readonly ComboBox mode = new() { DropDownStyle = ComboBoxStyle.DropDownList, Width = 360 };
+    private readonly CheckBox enabled = new() { Text = "自動減光を有効にする", Checked = true, AutoSize = true };
+    private readonly CheckBox temporarilyDisabled = new() { Text = "一時的に無効化", AutoSize = true };
+    private readonly Label status = new() { AutoSize = true, MaximumSize = new Size(640, 0) };
+    private readonly TextBox devices = new() { Multiline = true, ReadOnly = true, ScrollBars = ScrollBars.Vertical, Dock = DockStyle.Fill };
+    private readonly System.Windows.Forms.Timer timer = new() { Interval = 50 };
+    private readonly NotifyIcon tray;
+    private readonly Dimmer dimmer = new();
+    private readonly IdlePolicy idle = new(Environment.TickCount64);
+    private readonly InputMonitor input;
+    private Settings settings;
+    private bool quitting;
+    private long nextUi;
+    private long previewUntil;
+    private long previewStartAt;
+    private bool sessionLocked;
+
+    private bool hideInitialShow;
+    public MainForm(bool startInTray = false)
+    {
+        hideInitialShow = startInTray;
+        Text = "PadDim — ゲームパッド対応 自動減光";
+        Icon = Icon.ExtractAssociatedIcon(Application.ExecutablePath) ?? SystemIcons.Application;
+        Font = new Font("Yu Gothic UI", 10);
+        ClientSize = new Size(840, Math.Min(900, Screen.PrimaryScreen!.WorkingArea.Height - 100)); MinimumSize = new Size(760, 650);
+        StartPosition = FormStartPosition.CenterScreen;
+        try { settings = Settings.Load(); }
+        catch (Exception ex) { settings = new(); MessageBox.Show($"設定を読み込めないため初期値で起動します。\n{ex.Message}", "PadDim"); }
+        timeout.Value = settings.IdleSeconds; darkness.Value = settings.DimPercent; deadzone.Value = settings.DeadzonePercent;
+        brightness.Value = settings.BrightnessPercent; fadeSeconds.Value = settings.FadeSeconds;
+        mode.Items.AddRange(["モニター本体の輝度（DDC/CI・WMI）", "半透明の黒い画面を重ねる"]);
+        mode.SelectedIndex = settings.UseHardwareBrightness ? 0 : 1;
+        brightness.Enabled = mode.SelectedIndex == 0; darkness.Enabled = mode.SelectedIndex == 1;
+        mode.SelectedIndexChanged += (_, _) => { brightness.Enabled = mode.SelectedIndex == 0; darkness.Enabled = mode.SelectedIndex == 1; };
+        var scroll = new Panel { Dock = DockStyle.Fill, AutoScroll = true };
+        Controls.Add(scroll);
+        var layout = new TableLayoutPanel { Dock = DockStyle.Top, AutoSize = true, Padding = new Padding(22), ColumnCount = 1, RowCount = 14 };
+        layout.RowStyles.Clear();
+        for (int i = 0; i < 14; i++) layout.RowStyles.Add(new RowStyle(SizeType.AutoSize));
+        devices.MinimumSize = new Size(0, 140);
+        scroll.Controls.Add(layout);
+        layout.Controls.Add(new Label { Text = "操作が止まったら、画面を静かに暗く。", Font = new Font(Font.FontFamily, 17, FontStyle.Bold), AutoSize = true, Margin = new Padding(0, 0, 0, 16) });
+        layout.Controls.Add(enabled);
+        layout.Controls.Add(temporarilyDisabled);
+        layout.Controls.Add(Row("減光までの無操作時間（秒）", timeout));
+        layout.Controls.Add(Row("減光方式", mode));
+        layout.Controls.Add(Row("減光後の本体輝度（%）", brightness));
+        layout.Controls.Add(Row("黒い画面の濃さ（%）", darkness));
+        layout.Controls.Add(Row("フェードアウト時間（秒）", fadeSeconds));
+        layout.Controls.Add(Row("スティックの遊び（%）", deadzone));
+        var buttons = new FlowLayoutPanel { AutoSize = true, Dock = DockStyle.Fill, Margin = new Padding(0, 8, 0, 8) };
+        buttons.Controls.Add(Button("設定を保存", (_, _) => SaveSettings()));
+        buttons.Controls.Add(Button("減光を試す（5秒保持）", (_, _) => { Restore("プレビュー待機"); previewStartAt = Environment.TickCount64 + 300; }));
+        buttons.Controls.Add(Button("3秒後に中立位置を再取得", (_, _) => CalibrateLater()));
+        layout.Controls.Add(buttons);
+        layout.Controls.Add(new Label { AutoSize = true, MaximumSize = new Size(740, 0), Text = "減光時だけフェードアウトし、操作するとフェードなしで元の明るさに戻します。\n本体輝度は対応画面のみ変更します。DDC/CI設定がある画面では有効にしてください。\n×で常駐、終了は通知領域から。DirectInputの接続・中立位置取得時は手を離してください。", Margin = new Padding(0, 4, 0, 12) });
+        layout.Controls.Add(status);
+        layout.Controls.Add(new Label { Text = "入力の監視状況（同じ機器が両APIに表示される場合があります）", AutoSize = true, Margin = new Padding(0, 14, 0, 6) });
+        layout.Controls.Add(devices);
+        input = new InputMonitor(Handle);
+        ApplySensitivity();
+        var menu = new ContextMenuStrip();
+        menu.Items.Add("設定を開く", null, (_, _) => ShowSettings());
+        var pause = new ToolStripMenuItem("一時停止") { CheckOnClick = true };
+        pause.CheckedChanged += (_, _) => temporarilyDisabled.Checked = pause.Checked;
+        temporarilyDisabled.CheckedChanged += (_, _) =>
+        {
+            pause.Checked = temporarilyDisabled.Checked;
+            previewStartAt = 0;
+            Restore(temporarilyDisabled.Checked ? "一時的に無効化" : "監視を再開");
+        };
+        enabled.CheckedChanged += (_, _) => { previewStartAt = 0; Restore("設定変更"); };
+        menu.Items.Add(pause);
+        menu.Items.Add("明るさを戻す", null, (_, _) => { Restore("手動復帰"); dimmer.Restore(retry: true); });
+        menu.Items.Add("終了", null, (_, _) => { quitting = true; Close(); });
+        tray = new NotifyIcon { Icon = Icon, Text = "PadDim — 入力を監視中", ContextMenuStrip = menu, Visible = true };
+        tray.DoubleClick += (_, _) => ShowSettings();
+        timer.Tick += (_, _) => TickInput();
+        SystemEvents.DisplaySettingsChanged += DisplayChanged;
+        SystemEvents.SessionSwitch += SessionChanged;
+        SystemEvents.PowerModeChanged += PowerChanged;
+        timer.Start();
+        TickInput();
+    }
+    private long calibrateAt;
+    private void CalibrateLater() { Restore("3秒後に中立位置を取得します"); calibrateAt = Environment.TickCount64 + 3000; }
+    private void ApplySensitivity() { input.AxisThreshold = (int)deadzone.Value * 65535 / 100; input.StickDeadzone = (int)deadzone.Value * 32767 / 100; input.Calibrate(); }
+    private void SaveSettings()
+    {
+        var updated = new Settings { IdleSeconds = (int)timeout.Value, DimPercent = (int)darkness.Value, DeadzonePercent = (int)deadzone.Value, UseHardwareBrightness = mode.SelectedIndex == 0, BrightnessPercent = (int)brightness.Value, FadeSeconds = (int)fadeSeconds.Value };
+        try { updated.Save(); settings = updated; ApplySensitivity(); Restore("設定を保存しました"); }
+        catch (Exception ex) { MessageBox.Show(ex.Message, "設定の保存に失敗しました"); }
+    }
+    private void TickInput()
+    {
+        try
+        {
+            long now = Environment.TickCount64;
+            if (calibrateAt != 0 && now >= calibrateAt) { input.Calibrate(); calibrateAt = 0; Restore("中立位置を再取得"); }
+            string? source = input.Poll(now);
+            if (source is not null) Restore(source);
+            bool monitoring = enabled.Checked && !temporarilyDisabled.Checked;
+            if (!input.Healthy || sessionLocked || !monitoring) Restore(!input.Healthy ? "入力取得不可 — 減光を保留" : "一時停止");
+            if (previewStartAt != 0 && now >= previewStartAt)
+            {
+                previewStartAt = 0;
+                if (input.Healthy && !sessionLocked && monitoring)
+                { previewUntil = now + (int)fadeSeconds.Value * 1000 + 5000; dimmer.Dim((int)darkness.Value, mode.SelectedIndex == 0, (int)brightness.Value, (int)fadeSeconds.Value * 1000); }
+            }
+            if (previewUntil != 0 && now >= previewUntil) Restore("プレビュー終了");
+            if (previewUntil == 0 && idle.ShouldDim(now, settings.IdleSeconds, monitoring && !sessionLocked && calibrateAt == 0, input.Healthy)) dimmer.Dim(settings.DimPercent, settings.UseHardwareBrightness, settings.BrightnessPercent, settings.FadeSeconds * 1000);
+            if (now >= nextUi)
+            {
+                nextUi = now + 250;
+                status.Text = $"{(dimmer.IsDimmed ? "減光中" : monitoring ? "監視中" : "一時停止")}   |   無操作 {idle.IdleMilliseconds(now) / 1000} 秒\n最後の操作 / 状態: {idle.Source}";
+                string details = input.Status + Environment.NewLine + Environment.NewLine + dimmer.Status;
+                if (devices.Text != details) devices.Text = details;
+            }
+        }
+        catch (Exception ex)
+        {
+            Restore("監視エラー"); timer.Stop(); enabled.Checked = false;
+            devices.Text = $"監視を停止しました。再起動してください。\r\n{ex}";
+            status.Text = "監視エラー — 減光を解除しました";
+            ShowSettings();
+        }
+    }
+    private void Restore(string source) { dimmer.Restore(); previewUntil = 0; idle.Record(Environment.TickCount64, source); }
+    private void ShowSettings() { Restore("設定画面"); Show(); WindowState = FormWindowState.Normal; Activate(); }
+    protected override void SetVisibleCore(bool value)
+    {
+        if (value && hideInitialShow) { hideInitialShow = false; value = false; }
+        base.SetVisibleCore(value);
+    }
+    private void OnUi(Action action) { if (!IsDisposed && IsHandleCreated) BeginInvoke(action); }
+    private void DisplayChanged(object? sender, EventArgs e) => OnUi(() => Restore("ディスプレイ構成変更"));
+    private void SessionChanged(object sender, SessionSwitchEventArgs e) => OnUi(() => { sessionLocked = e.Reason == SessionSwitchReason.SessionLock; Restore("セッション変更"); });
+    private void PowerChanged(object sender, PowerModeChangedEventArgs e) => OnUi(() => Restore("電源状態変更"));
+    protected override void OnFormClosing(FormClosingEventArgs e)
+    {
+        if (!quitting && e.CloseReason == CloseReason.UserClosing) { e.Cancel = true; Hide(); }
+        base.OnFormClosing(e);
+    }
+    protected override void Dispose(bool disposing)
+    {
+        if (disposing)
+        {
+            timer.Stop(); timer.Dispose(); dimmer.Dispose();
+            SystemEvents.DisplaySettingsChanged -= DisplayChanged;
+            SystemEvents.SessionSwitch -= SessionChanged;
+            SystemEvents.PowerModeChanged -= PowerChanged;
+            tray.Visible = false; tray.Dispose(); input.Dispose();
+        }
+        base.Dispose(disposing);
+    }
+    private static FlowLayoutPanel Row(string text, Control control)
+    {
+        var row = new FlowLayoutPanel { AutoSize = true, Dock = DockStyle.Fill, Margin = new Padding(0, 7, 0, 0) };
+        row.Controls.Add(new Label { Text = text, Width = 280, AutoSize = false, Height = 30, TextAlign = ContentAlignment.MiddleLeft }); row.Controls.Add(control); return row;
+    }
+    private static Button Button(string text, EventHandler handler)
+    { var button = new Button { Text = text, AutoSize = true, Padding = new Padding(6, 3, 6, 3) }; button.Click += handler; return button; }
+}
