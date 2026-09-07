@@ -13,6 +13,13 @@ public sealed class MainForm : Form
     private readonly Label status = new() { AutoSize = true, MaximumSize = new Size(640, 0) };
     private readonly TextBox devices = new() { Multiline = true, ReadOnly = true, ScrollBars = ScrollBars.Vertical, Dock = DockStyle.Fill };
     private readonly System.Windows.Forms.Timer timer = new() { Interval = 50 };
+    private readonly System.Windows.Forms.Timer recoveryTimer = new() { Interval = 200 };
+    private readonly Button recoveryButton = new()
+    {
+        Name = "recoveryButton", Text = "強制復旧", AutoSize = true,
+        Padding = new Padding(6, 3, 6, 3), Enabled = false,
+        AccessibleDescription = "保存してある元の輝度への復元を再試行します。"
+    };
     private readonly NotifyIcon tray;
     private readonly Dimmer dimmer = new();
     private readonly IdlePolicy idle = new(Environment.TickCount64);
@@ -69,6 +76,16 @@ public sealed class MainForm : Form
         buttons.Controls.Add(Button("設定を保存", (_, _) => SaveSettings()));
         buttons.Controls.Add(Button("減光を試す（5秒保持）", (_, _) => { Restore("プレビュー待機"); previewStartAt = Environment.TickCount64 + 300; }));
         buttons.Controls.Add(Button("3秒後に中立位置を再取得", (_, _) => CalibrateLater()));
+        recoveryButton.Click += (_, _) =>
+        {
+            // Guard against a completed asynchronous restore since the last UI refresh.
+            if (!dimmer.IsDimmed) { recoveryButton.Enabled = false; return; }
+            previewStartAt = 0;
+            Restore("強制復旧");
+            dimmer.Restore(retry: true);
+            recoveryButton.Enabled = false;
+        };
+        buttons.Controls.Add(recoveryButton);
         layout.Controls.Add(buttons);
         layout.Controls.Add(new Label { AutoSize = true, MaximumSize = new Size(740, 0), Text = "減光時だけフェードアウトし、操作するとフェードなしで元の明るさに戻します。\n本体輝度は対応画面のみ変更します。DDC/CI設定がある画面では有効にしてください。\n×で常駐、終了は通知領域から。DirectInputの接続・中立位置取得時は手を離してください。", Margin = new Padding(0, 4, 0, 12) });
         layout.Controls.Add(status);
@@ -95,6 +112,9 @@ public sealed class MainForm : Form
         SystemEvents.SessionSwitch += SessionChanged;
         SystemEvents.PowerModeChanged += PowerChanged;
         timer.Start();
+        // Keep recovery available even if the input monitor has stopped with an error.
+        recoveryTimer.Tick += (_, _) => recoveryButton.Enabled = dimmer.IsDimmed;
+        recoveryTimer.Start();
         TickInput();
     }
     private long calibrateAt;
@@ -162,7 +182,7 @@ public sealed class MainForm : Form
     {
         if (disposing)
         {
-            timer.Stop(); timer.Dispose(); dimmer.Dispose();
+            timer.Stop(); timer.Dispose(); recoveryTimer.Stop(); recoveryTimer.Dispose(); dimmer.Dispose();
             SystemEvents.DisplaySettingsChanged -= DisplayChanged;
             SystemEvents.SessionSwitch -= SessionChanged;
             SystemEvents.PowerModeChanged -= PowerChanged;
