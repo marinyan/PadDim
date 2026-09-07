@@ -25,6 +25,7 @@ try {
     }
     Copy-Item -LiteralPath 'artifacts/packages/system.management/10.0.0/THIRD-PARTY-NOTICES.TXT' -Destination "$licenseDir/System.Management-THIRD-PARTY-NOTICES.TXT"
     Copy-Item -LiteralPath 'THIRD-PARTY-NOTICES.txt' -Destination 'artifacts/publish/win-x64/THIRD-PARTY-NOTICES.txt'
+    Copy-Item -LiteralPath 'LICENSE.txt' -Destination 'artifacts/publish/win-x64/LICENSE.txt'
     & $IsccPath /Qp "/DAppVersion=$Version" installer/PadDim.iss
     if ($LASTEXITCODE -ne 0) { throw 'Installer build failed' }
     Get-Item "artifacts/installer/PadDim-Setup-$Version-win-x64.exe"

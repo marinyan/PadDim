@@ -27,6 +27,7 @@ CloseApplications=no
 RestartApplications=no
 DisableProgramGroupPage=yes
 UsePreviousTasks=yes
+LicenseFile=..\LICENSE.txt
 
 [Languages]
 Name: "japanese"; MessagesFile: "compiler:Languages\Japanese.isl"

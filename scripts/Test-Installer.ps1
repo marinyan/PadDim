@@ -15,7 +15,7 @@ if (Test-Path -LiteralPath $startupShortcut) { throw 'Existing startup shortcut 
 try {
     $setup = Start-Process -FilePath $setupFile -ArgumentList @('/VERYSILENT','/SUPPRESSMSGBOXES','/NORESTART',('/DIR="' + $testDir + '"'),('/GROUP="' + $groupName + '"'),('/LOG="' + (Join-Path $testRoot 'artifacts/installer-test.log') + '"')) -WindowStyle Hidden -Wait -PassThru
     if ($setup.ExitCode -ne 0) { throw "Install failed: $($setup.ExitCode)" }
-    foreach ($file in @('PadDim.exe','coreclr.dll','licenses/microsoft.netcore.app.runtime.win-x64-LICENSE.TXT','THIRD-PARTY-NOTICES.txt')) {
+    foreach ($file in @('PadDim.exe','coreclr.dll','LICENSE.txt','licenses/microsoft.netcore.app.runtime.win-x64-LICENSE.TXT','THIRD-PARTY-NOTICES.txt')) {
         if (!(Test-Path -LiteralPath (Join-Path $testDir $file))) { throw "Missing installed file: $file" }
     }
     if (!(Test-Path $uninstallKey)) { throw 'Uninstall registration missing' }
