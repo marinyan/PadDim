@@ -30,11 +30,12 @@ internal static class BrightnessTargets
             {
                 if (!GetNumberOfPhysicalMonitorsFromHMONITOR(monitor, out uint count)) return true;
                 if (count == 0) return true;
+                string recoveryId = MonitorIdentity(monitor, count);
                 var physical = new PhysicalMonitor[count];
                 if (!GetPhysicalMonitorsFromHMONITOR(monitor, count, physical)) return true;
                 foreach (var entry in physical)
                 {
-                    var target = new DdcTarget(entry.Handle, entry.Description);
+                    var target = new DdcTarget(entry.Handle, entry.Description, recoveryId);
                     try { target.Capture(); result.Add(target); ddcCount++; }
                     catch (Exception ex) { diagnostics.Add($"{entry.Description}: DDC/CI利用不可 ({ex.Message})"); target.Dispose(); }
                 }
@@ -50,6 +51,7 @@ internal static class BrightnessTargets
     private sealed class WmiTarget(string instance, uint original) : IBrightnessTarget
     {
         public string Name => $"WMI: {instance}";
+        public string RecoveryId => $"WMI:{instance}";
         public uint Minimum => 0;
         public uint Maximum => 100;
         public uint Original => original;
@@ -79,11 +81,12 @@ internal static class BrightnessTargets
         }
         public void Dispose() { }
     }
-    private sealed class DdcTarget(nint handle, string name) : IBrightnessTarget
+    private sealed class DdcTarget(nint handle, string name, string recoveryId) : IBrightnessTarget
     {
         private nint handle = handle;
         private bool vcp;
         public string Name => $"DDC/CI: {name}";
+        public string RecoveryId => recoveryId;
         public uint Minimum { get; private set; }
         public uint Maximum { get; private set; }
         public uint Original { get; private set; }
@@ -103,6 +106,32 @@ internal static class BrightnessTargets
         }
         public void Dispose() { if (handle != 0) { DestroyPhysicalMonitor(handle); handle = 0; } }
     }
+    private static string MonitorIdentity(nint monitor, uint physicalCount)
+    {
+        // Never use the friendly model name or a transient HMONITOR as an identity.
+        if (physicalCount != 1) return "";
+        var info = new MonitorInfo { Size = Marshal.SizeOf<MonitorInfo>() };
+        if (!GetMonitorInfo(monitor, ref info)) return "";
+        var device = new DisplayDevice { Size = Marshal.SizeOf<DisplayDevice>() };
+        if (!EnumDisplayDevices(info.Device, 0, ref device, 1) || string.IsNullOrWhiteSpace(device.Id)) return "";
+        var extra = new DisplayDevice { Size = Marshal.SizeOf<DisplayDevice>() };
+        if (EnumDisplayDevices(info.Device, 1, ref extra, 1)) return "";
+        return "DDC:" + device.Id;
+    }
+    [StructLayout(LayoutKind.Sequential, CharSet = CharSet.Unicode)]
+    private struct MonitorInfo { public int Size; public Rect Monitor, Work; public uint Flags; [MarshalAs(UnmanagedType.ByValTStr, SizeConst = 32)] public string Device; }
+    [StructLayout(LayoutKind.Sequential, CharSet = CharSet.Unicode)]
+    private struct DisplayDevice
+    {
+        public int Size;
+        [MarshalAs(UnmanagedType.ByValTStr, SizeConst = 32)] public string Name;
+        [MarshalAs(UnmanagedType.ByValTStr, SizeConst = 128)] public string Description;
+        public uint Flags;
+        [MarshalAs(UnmanagedType.ByValTStr, SizeConst = 128)] public string Id;
+        [MarshalAs(UnmanagedType.ByValTStr, SizeConst = 128)] public string Key;
+    }
+    [DllImport("user32.dll", CharSet = CharSet.Unicode)] [return: MarshalAs(UnmanagedType.Bool)] private static extern bool GetMonitorInfo(nint monitor, ref MonitorInfo info);
+    [DllImport("user32.dll", CharSet = CharSet.Unicode)] [return: MarshalAs(UnmanagedType.Bool)] private static extern bool EnumDisplayDevices(string device, uint index, ref DisplayDevice info, uint flags);
     [StructLayout(LayoutKind.Sequential)] private struct Rect { public int Left, Top, Right, Bottom; }
     [StructLayout(LayoutKind.Sequential, CharSet = CharSet.Unicode)]
     private struct PhysicalMonitor { public nint Handle; [MarshalAs(UnmanagedType.ByValTStr, SizeConst = 128)] public string Description; }

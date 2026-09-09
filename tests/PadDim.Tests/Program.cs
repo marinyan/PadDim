@@ -110,9 +110,12 @@ controlThread.SetApartmentState(ApartmentState.STA);
 controlThread.Start(); controlThread.Join();
 if (controlError is not null) throw new Exception("Minutes input regression", controlError);
 
+RecoveryTests.Run();
+
 sealed class FakeTarget(uint original) : IBrightnessTarget
 {
     public string Name => "Test display";
+    public string RecoveryId { get; init; } = "test:display";
     public uint Minimum => 0;
     public uint Maximum => 100;
     public uint Original => original;

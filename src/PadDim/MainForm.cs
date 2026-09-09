@@ -21,7 +21,7 @@ public sealed class MainForm : Form
         AccessibleDescription = "保存してある元の輝度への復元を再試行します。"
     };
     private readonly NotifyIcon tray;
-    private readonly Dimmer dimmer = new();
+    private readonly Dimmer dimmer;
     private readonly IdlePolicy idle = new(Environment.TickCount64);
     private readonly InputMonitor input;
     private Settings settings;
@@ -32,8 +32,9 @@ public sealed class MainForm : Form
     private bool sessionLocked;
 
     private bool hideInitialShow;
-    public MainForm(bool startInTray = false)
+    public MainForm(bool startInTray = false, bool persistentRecovery = true)
     {
+        dimmer = new(persistentRecovery);
         hideInitialShow = startInTray;
         Text = "PadDim — ゲームパッド対応 自動減光";
         Icon = Icon.ExtractAssociatedIcon(Application.ExecutablePath) ?? SystemIcons.Application;
@@ -178,6 +179,20 @@ public sealed class MainForm : Form
     {
         if (!quitting && e.CloseReason == CloseReason.UserClosing) { e.Cancel = true; Hide(); }
         base.OnFormClosing(e);
+    }
+    protected override void WndProc(ref Message m)
+    {
+        if (m.Msg == 0x0011) // WM_QUERYENDSESSION: start restoration while drivers are available.
+        {
+            timer.Stop();
+            Restore("Windowsの終了準備");
+        }
+        if (m.Msg == 0x0016) // WM_ENDSESSION
+        {
+            if (m.WParam != 0) dimmer.RestoreForShutdown();
+            else { Restore("Windowsの終了キャンセル"); timer.Start(); }
+        }
+        base.WndProc(ref m);
     }
     protected override void Dispose(bool disposing)
     {

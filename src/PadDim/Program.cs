@@ -7,7 +7,7 @@ internal static class Program
         ApplicationConfiguration.Initialize();
         if (args.Length == 2 && args[0] == "--tray-smoke-test")
         {
-            using var form = new MainForm(startInTray: true);
+            using var form = new MainForm(startInTray: true, persistentRecovery: false);
             using var check = new System.Windows.Forms.Timer { Interval = 300 };
             check.Tick += (_, _) =>
             {
@@ -73,13 +73,13 @@ internal static class Program
             var diagnostics = new List<string>();
             var targets = BrightnessTargets.Discover(diagnostics);
             foreach (var target in targets)
-            { diagnostics.Add($"{target.Name}: 現在 {target.Original}, 範囲 {target.Minimum}–{target.Maximum}"); target.Dispose(); }
+            { diagnostics.Add($"{target.Name}: 現在 {target.Original}, 範囲 {target.Minimum}–{target.Maximum}, 復元用識別子: {(string.IsNullOrWhiteSpace(target.RecoveryId) ? "取得不可" : "取得済み")}"); target.Dispose(); }
             File.WriteAllLines(args[1], diagnostics);
             return;
         }
         if (args.Length == 2 && args[0] == "--render-ui")
         {
-            using var form = new MainForm();
+            using var form = new MainForm(persistentRecovery: false);
             form.Show();
             Application.DoEvents();
             using var bitmap = new Bitmap(form.Width, form.Height);

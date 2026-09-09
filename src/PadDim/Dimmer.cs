@@ -5,7 +5,7 @@ namespace PadDim;
 public sealed class Dimmer : IDisposable
 {
     private readonly List<Shade> shades = [];
-    private readonly HardwareDimmer hardware = new();
+    private readonly HardwareDimmer hardware;
     private readonly System.Windows.Forms.Timer fadeTimer = new() { Interval = 30 };
     private bool requested;
     private long fadeStart;
@@ -13,12 +13,17 @@ public sealed class Dimmer : IDisposable
     private double targetOpacity;
     public bool IsDimmed => shades.Count > 0 || hardware.IsDimmed;
     public string Status => hardware.Status;
-    public Dimmer() => fadeTimer.Tick += (_, _) =>
+    public Dimmer(bool persistentRecovery = true)
     {
-        double progress = fadeDuration <= 0 ? 1 : Math.Clamp((Environment.TickCount64 - fadeStart) / (double)fadeDuration, 0, 1);
-        foreach (var shade in shades) shade.Opacity = targetOpacity * progress;
-        if (progress >= 1) fadeTimer.Stop();
-    };
+        hardware = new(persistentRecovery);
+        fadeTimer.Tick += (_, _) =>
+        {
+            double progress = fadeDuration <= 0 ? 1 : Math.Clamp((Environment.TickCount64 - fadeStart) / (double)fadeDuration, 0, 1);
+            foreach (var shade in shades) shade.Opacity = targetOpacity * progress;
+            if (progress >= 1) fadeTimer.Stop();
+        };
+    }
+    public void RestoreForShutdown() { Restore(retry: true); hardware.RestoreForShutdown(); }
     public void Dim(int percent, bool useHardware, int brightnessPercent, int fadeMilliseconds, bool useOverlayWithHardware = false)
     {
         if (requested) return;

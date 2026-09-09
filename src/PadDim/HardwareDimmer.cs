@@ -4,7 +4,8 @@ namespace PadDim;
 public sealed class HardwareDimmer : IDisposable
 {
     private readonly object gate = new();
-    private readonly BrightnessSession session = new();
+    private readonly BrightnessSession session;
+    private readonly BrightnessRecovery? recovery;
     private Task worker = Task.CompletedTask;
     private bool desired;
     private int percent;
@@ -12,10 +13,17 @@ public sealed class HardwareDimmer : IDisposable
     private long generation;
     private bool running;
     private long retryAfter;
+    private bool shuttingDown;
     private volatile int pending;
     private volatile string status = "本体輝度: 待機中（減光時に対応画面を確認）";
     public bool IsDimmed { get { lock (gate) return pending > 0 || (desired && running); } }
     public string Status => status;
+    public HardwareDimmer(bool persistentRecovery = true)
+    {
+        if (persistentRecovery) recovery = new(Path.Combine(Path.GetDirectoryName(Settings.FilePath)!, "brightness-recovery.json"));
+        session = new(recovery);
+        if (persistentRecovery) Request(false, retry: true);
+    }
     public void Request(bool dim, int level = 20, int fade = 3000, bool retry = false)
     {
         lock (gate)
@@ -38,6 +46,12 @@ public sealed class HardwareDimmer : IDisposable
             try
             {
                 var errors = session.Restore();
+                if (errors.Count == 0 && recovery is not null && recovery.Count > 0)
+                {
+                    status = "本体輝度: 前回終了時の輝度を復元中…";
+                    var diagnostics = new List<string>();
+                    errors.AddRange(recovery.Recover(BrightnessTargets.Discover(diagnostics)));
+                }
                 if (errors.Count != 0) status = string.Join(Environment.NewLine, errors) + "\n操作すると復元を再試行します。";
                 else if (dim && IsCurrent(version))
                 {
@@ -52,7 +66,8 @@ public sealed class HardwareDimmer : IDisposable
                 else status = "本体輝度: 復元済み";
             }
             catch (Exception ex) { status = $"本体輝度エラー: {ex.Message}"; }
-            pending = session.PendingCount;
+            try { pending = Math.Max(session.PendingCount, recovery?.Count ?? 0); }
+            catch { pending = Math.Max(session.PendingCount, 1); }
             lock (gate)
             {
                 if (generation != version) continue;
@@ -66,6 +81,16 @@ public sealed class HardwareDimmer : IDisposable
         Request(false, retry: true);
         Task current;
         lock (gate) current = worker;
-        current.GetAwaiter().GetResult();
+        if (shuttingDown) current.Wait(TimeSpan.FromSeconds(2));
+        else current.GetAwaiter().GetResult();
+    }
+    public void RestoreForShutdown()
+    {
+        shuttingDown = true;
+        Request(false, retry: true);
+        Task current;
+        lock (gate) current = worker;
+        // Do not indefinitely hold up shutdown on an unresponsive monitor driver.
+        current.Wait(TimeSpan.FromSeconds(2));
     }
 }

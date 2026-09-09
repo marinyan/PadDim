@@ -3,6 +3,7 @@ namespace PadDim;
 public interface IBrightnessTarget : IDisposable
 {
     string Name { get; }
+    string RecoveryId { get; }
     uint Minimum { get; }
     uint Maximum { get; }
     uint Original { get; }
@@ -10,7 +11,7 @@ public interface IBrightnessTarget : IDisposable
 }
 
 // Targets are captured before any writes, so duplicate API paths preserve the same original value.
-public sealed class BrightnessSession
+public sealed class BrightnessSession(BrightnessRecovery? recovery = null)
 {
     private readonly List<IBrightnessTarget> pending = [];
     public int PendingCount => pending.Count;
@@ -33,6 +34,7 @@ public sealed class BrightnessSession
                 uint value = DimValue(target.Minimum, target.Maximum, target.Original, percent);
                 if (value == target.Original) { target.Dispose(); continue; }
                 // Keep original even when a failed driver call might have partially changed brightness.
+                recovery?.Capture(target);
                 pending.Add(target);
                 active.Add((target, value, target.Original));
             }
@@ -65,7 +67,7 @@ public sealed class BrightnessSession
         var errors = new List<string>();
         foreach (var target in pending.ToArray())
         {
-            try { target.Set(target.Original); pending.Remove(target); target.Dispose(); }
+            try { target.Set(target.Original); recovery?.Complete(target.RecoveryId); pending.Remove(target); target.Dispose(); }
             catch (Exception ex) { errors.Add($"{target.Name}: 復元できません — {ex.Message}"); }
         }
         return errors;
