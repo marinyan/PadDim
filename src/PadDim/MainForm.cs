@@ -3,7 +3,7 @@ using Microsoft.Win32;
 namespace PadDim;
 public sealed class MainForm : Form
 {
-    private readonly NumericUpDown timeout = new() { Minimum = 10m / 60m, Maximum = 1440, Increment = 1, DecimalPlaces = 2, Width = 120 };
+    private readonly MinutesInput timeout = new();
     private readonly NumericUpDown darkness = new() { Minimum = 5, Maximum = 90, Increment = 5, Width = 120 };
     private readonly NumericUpDown deadzone = new() { Minimum = 1, Maximum = 40, Width = 120 };
     private readonly NumericUpDown brightness = new() { Minimum = 0, Maximum = 100, Width = 120 };
@@ -122,6 +122,7 @@ public sealed class MainForm : Form
     private void ApplySensitivity() { input.AxisThreshold = (int)deadzone.Value * 65535 / 100; input.StickDeadzone = (int)deadzone.Value * 32767 / 100; input.Calibrate(); }
     private void SaveSettings()
     {
+        timeout.CommitEdit();
         var updated = new Settings { IdleSeconds = (int)Math.Round(timeout.Value * 60m, MidpointRounding.AwayFromZero), DimPercent = (int)darkness.Value, DeadzonePercent = (int)deadzone.Value, UseHardwareBrightness = mode.SelectedIndex != 1, UseOverlayWithHardware = mode.SelectedIndex == 2, BrightnessRatioPercent = (int)brightness.Value, FadeSeconds = (int)fadeSeconds.Value };
         try { updated.Save(); settings = updated; ApplySensitivity(); Restore("設定を保存しました"); }
         catch (Exception ex) { MessageBox.Show(ex.Message, "設定の保存に失敗しました"); }

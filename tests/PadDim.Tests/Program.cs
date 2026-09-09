@@ -59,6 +59,57 @@ var combinedSettings = new Settings { UseHardwareBrightness = true, UseOverlayWi
 var roundTrip = System.Text.Json.JsonSerializer.Deserialize<Settings>(System.Text.Json.JsonSerializer.Serialize(combinedSettings))!;
 Check(roundTrip.UseHardwareBrightness && roundTrip.UseOverlayWithHardware && roundTrip.BrightnessRatioPercent == 50, "Combined mode and relative ratio survive settings round trip");
 
+Check(Settings.FromJson("{\"IdleSeconds\":0}").IdleSeconds == 10, "Zero stored timeout is bounded");
+Check(Settings.FromJson("{\"IdleSeconds\":-100}").IdleSeconds == 10, "Negative stored timeout is bounded");
+Check(Settings.FromJson("{\"IdleSeconds\":2147483647}").IdleSeconds == 86400, "Large stored timeout is bounded");
+foreach (string invalid in new[] { "NaN", "\"NaN\"", "Infinity", "1e1000", "null", "-1.5" })
+{
+    bool rejected = false;
+    try { Settings.FromJson("{\"IdleSeconds\":" + invalid + "}"); }
+    catch (System.Text.Json.JsonException) { rejected = true; }
+    Check(rejected, $"Reject malformed stored timeout: {invalid}");
+}
+Exception? controlError = null;
+var controlThread = new Thread(() =>
+{
+    try
+    {
+        System.Globalization.CultureInfo.CurrentCulture = System.Globalization.CultureInfo.GetCultureInfo("ja-JP");
+        using var input = new MinutesInput();
+        foreach (var item in new[] { (5m, "5"), (20m, "20"), (0.5m, "0.5"), (1.25m, "1.25") })
+        {
+            input.Value = item.Item1;
+            Check(input.Text == item.Item2, $"Minute display: {item.Item2}");
+        }
+        foreach (string invalid in new[] { "NaN", "Infinity", "-Infinity", "", "-", "garbage", new string('9', 100) })
+        {
+            input.Value = 5;
+            input.Text = invalid;
+            input.CommitEdit();
+            Check(input.Value == 5 && input.Text == "5", $"Invalid minute entry restores previous value: {invalid}");
+        }
+        foreach (string low in new[] { "0", "-5", "0.001" })
+        {
+            input.Value = 5; input.Text = low; input.CommitEdit();
+            Check((int)Math.Round(input.Value * 60m, MidpointRounding.AwayFromZero) == 10 && input.Text == "0.17", $"Minute entry bounded to minimum: {low}");
+        }
+        input.Text = "999999"; input.CommitEdit();
+        Check(input.Value == 1440 && input.Text == "1440", "Minute entry bounded to maximum");
+        foreach (int seconds in new[] { 10, 11, 29, 30, 59, 61, 300, 1200, 86399, 86400 })
+        {
+            input.Value = seconds / 60m; input.CommitEdit();
+            Check((int)Math.Round(input.Value * 60m, MidpointRounding.AwayFromZero) == seconds, $"Existing timeout preserved: {seconds}s");
+        }
+        System.Globalization.CultureInfo.CurrentCulture = System.Globalization.CultureInfo.GetCultureInfo("de-DE");
+        input.Text = "1,5"; input.CommitEdit();
+        Check(input.Value == 1.5m && input.Text == "1,5", "Localized decimal separator works");
+    }
+    catch (Exception ex) { controlError = ex; }
+});
+controlThread.SetApartmentState(ApartmentState.STA);
+controlThread.Start(); controlThread.Join();
+if (controlError is not null) throw new Exception("Minutes input regression", controlError);
+
 sealed class FakeTarget(uint original) : IBrightnessTarget
 {
     public string Name => "Test display";
