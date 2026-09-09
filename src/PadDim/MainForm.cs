@@ -23,6 +23,7 @@ public sealed class MainForm : Form
     private readonly NotifyIcon tray;
     private readonly Dimmer dimmer;
     private readonly IdlePolicy idle = new(Environment.TickCount64);
+    private readonly FullscreenGuard fullscreen = new();
     private readonly InputMonitor input;
     private Settings settings;
     private bool quitting;
@@ -137,19 +138,24 @@ public sealed class MainForm : Form
             string? source = input.Poll(now);
             if (source is not null) Restore(source);
             bool monitoring = !temporarilyDisabled.Checked;
+            if (fullscreen.Update(FullscreenMonitor.Read(), idle, now))
+            {
+                previewStartAt = 0;
+                Restore(fullscreen.Reason);
+            }
             if (!input.Healthy || sessionLocked || !monitoring) Restore(!input.Healthy ? "入力取得不可 — 減光を保留" : "一時停止");
             if (previewStartAt != 0 && now >= previewStartAt)
             {
                 previewStartAt = 0;
-                if (input.Healthy && !sessionLocked && monitoring)
+                if (input.Healthy && !sessionLocked && monitoring && !fullscreen.BlocksDimming)
                 { previewUntil = now + (int)fadeSeconds.Value * 1000 + 5000; dimmer.Dim((int)darkness.Value, mode.SelectedIndex != 1, (int)brightness.Value, (int)fadeSeconds.Value * 1000, mode.SelectedIndex == 2); }
             }
             if (previewUntil != 0 && now >= previewUntil) Restore("プレビュー終了");
-            if (previewUntil == 0 && idle.ShouldDim(now, settings.IdleSeconds, monitoring && !sessionLocked && calibrateAt == 0, input.Healthy)) dimmer.Dim(settings.DimPercent, settings.UseHardwareBrightness, settings.BrightnessRatioPercent, settings.FadeSeconds * 1000, settings.UseOverlayWithHardware);
+            if (previewUntil == 0 && idle.ShouldDim(now, settings.IdleSeconds, monitoring && !sessionLocked && !fullscreen.BlocksDimming && calibrateAt == 0, input.Healthy)) dimmer.Dim(settings.DimPercent, settings.UseHardwareBrightness, settings.BrightnessRatioPercent, settings.FadeSeconds * 1000, settings.UseOverlayWithHardware);
             if (now >= nextUi)
             {
                 nextUi = now + 250;
-                status.Text = $"{(dimmer.IsDimmed ? "減光中" : monitoring ? "監視中" : "一時停止")}   |   無操作 {idle.IdleMilliseconds(now) / 1000} 秒\n最後の操作 / 状態: {idle.Source}";
+                status.Text = $"{(!monitoring ? "一時停止" : fullscreen.BlocksDimming ? fullscreen.Reason : dimmer.IsDimmed ? "減光中" : "監視中")}   |   無操作 {idle.IdleMilliseconds(now) / 1000} 秒\n最後の操作 / 状態: {idle.Source}";
                 string details = input.Status + Environment.NewLine + Environment.NewLine + dimmer.Status;
                 if (devices.Text != details) devices.Text = details;
             }

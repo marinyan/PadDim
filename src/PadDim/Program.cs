@@ -94,7 +94,7 @@ internal static class Program
                 using var owner = new Form();
                 using var input = new InputMonitor(owner.Handle);
                 input.Poll(Environment.TickCount64);
-                File.WriteAllText(args[1], $"Healthy={input.Healthy}\n{input.Status}");
+                File.WriteAllText(args[1], $"Healthy={input.Healthy}\n{input.Status}\nFullscreen={FullscreenMonitor.Read()}");
             }
             catch (Exception ex) { File.WriteAllText(args[1], ex.ToString()); Environment.ExitCode = 1; }
             return;

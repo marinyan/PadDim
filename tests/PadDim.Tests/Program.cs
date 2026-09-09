@@ -111,6 +111,7 @@ controlThread.Start(); controlThread.Join();
 if (controlError is not null) throw new Exception("Minutes input regression", controlError);
 
 RecoveryTests.Run();
+FullscreenTests.Run();
 
 sealed class FakeTarget(uint original) : IBrightnessTarget
 {
