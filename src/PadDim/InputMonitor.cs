@@ -9,12 +9,12 @@ public sealed class InputMonitor : IDisposable
     private readonly Dictionary<Guid, Pad> pads = [];
     private readonly nint window;
     private long nextScan;
-    private uint lastDesktopTick;
-    private bool desktopInitialized;
+    private readonly DesktopInput desktop = new();
     private bool scanHealthy = true;
     private readonly bool[] xConnected = new bool[4];
     private readonly bool[] xWasActive = new bool[4];
     public bool Healthy { get; private set; } = true;
+    public bool IsCalibrating => pads.Values.Any(p => p.IsCalibrating);
     public string Status { get; private set; } = "接続を確認中";
     public int AxisThreshold { get; set; } = 4000;
     public int StickDeadzone { get; set; } = 8000;
@@ -22,17 +22,14 @@ public sealed class InputMonitor : IDisposable
 
     public string? Poll(long now)
     {
+        var activities = new List<string>();
         string? activity = null;
         Healthy = true;
         var lines = new List<string>();
-        LastInput info = new() { Size = (uint)Marshal.SizeOf<LastInput>() };
-        if (GetLastInputInfo(ref info))
-        {
-            if (desktopInitialized && info.Tick != lastDesktopTick) activity = "キーボード / マウス";
-            desktopInitialized = true;
-            lastDesktopTick = info.Tick;
-        }
-        else { Healthy = false; lines.Add("キーボード / マウス: 取得失敗"); }
+        var desktopActivity = desktop.Poll();
+        if (desktopActivity is not null) activities.Add(desktopActivity);
+        if (!desktop.Healthy) { Healthy = false; lines.Add("キーボード / マウス: 取得失敗"); }
+        else lines.Add($"キーボード / マウス: {(desktopActivity is null ? "入力なし" : desktopActivity + "の入力を検出")}");
 
         for (uint slot = 0; slot < 4; slot++)
         {
@@ -51,6 +48,7 @@ public sealed class InputMonitor : IDisposable
                 Math.Abs((int)state.RX) > StickDeadzone || Math.Abs((int)state.RY) > StickDeadzone;
             if (active || xWasActive[slot]) activity = $"XInput {slot + 1}";
             xWasActive[slot] = active;
+            if (active) activities.Add($"XInput {slot + 1}");
             lines.Add($"XInput {slot + 1}: {(active ? "操作中" : "監視中")}");
         }
 
@@ -88,8 +86,8 @@ public sealed class InputMonitor : IDisposable
         {
             try
             {
-                if (pad.Read()) activity = $"DirectInput: {pad.Name}";
-                lines.Add($"DirectInput: {pad.Name} — 監視中");
+                if (pad.Read()) activities.Add($"DirectInput: {pad.Name}");
+                lines.Add($"DirectInput: {pad.Name} — {pad.Status}");
             }
             catch (Exception ex)
             {
@@ -99,21 +97,25 @@ public sealed class InputMonitor : IDisposable
         }
         if (!xConnected.Any(c => c) && pads.Count == 0 && scanHealthy) lines.Add("ゲームパッド未接続（3秒ごとに再検索）");
         Status = string.Join(Environment.NewLine, lines);
-        return activity;
+        if (activity is not null) activities.Add(activity);
+        return activities.Count == 0 ? null : string.Join(" / ", activities.Distinct());
     }
     private string scanError = "";
     public void Calibrate()
     {
         foreach (var pad in pads.Values) pad.Calibrate(AxisThreshold);
     }
-    public void Dispose() { foreach (var pad in pads.Values) pad.Dispose(); directInput.Dispose(); }
+    public void Dispose() { foreach (var pad in pads.Values) pad.Dispose(); directInput.Dispose(); desktop.Dispose(); }
 
     private sealed class Pad(IDirectInputDevice8 device, string name, int threshold) : IDisposable
     {
         public string Name => name;
-        private AxisActivity axes = new(threshold);
+        private SettlingAxisActivity axes = new(threshold);
+        private int currentThreshold = threshold;
+        public string Status { get; private set; } = "中立位置の安定待ち";
+        public bool IsCalibrating => axes.IsCalibrating;
         private bool wasActive;
-        public void Calibrate(int threshold) { axes = new(threshold); wasActive = false; }
+        public void Calibrate(int threshold) { currentThreshold = threshold; axes = new(threshold); wasActive = false; }
         public bool Read()
         {
             // Vortice's GetDeviceState wrapper throws on failed HRESULTs.
@@ -123,24 +125,29 @@ public sealed class InputMonitor : IDisposable
             catch (SharpGen.Runtime.SharpGenException)
             {
                 device.Acquire().CheckError();
+                Calibrate(currentThreshold);
                 device.Poll();
                 raw = device.GetCurrentJoystickState();
             }
-            bool active = axes.Sample([raw.X, raw.Y, raw.Z, raw.RotationX, raw.RotationY, raw.RotationZ, raw.Sliders[0], raw.Sliders[1]]);
-            for (int i = 0; i < 128; i++) active |= raw.Buttons[i];
-            for (int i = 0; i < 4; i++) active |= (raw.PointOfViewControllers[i] & 0xffff) != 0xffff;
+            int[] values = [raw.X, raw.Y, raw.Z, raw.RotationX, raw.RotationY, raw.RotationZ, raw.Sliders[0], raw.Sliders[1]];
+            bool active = axes.Sample(values, Environment.TickCount64);
+            string[] names = ["X", "Y", "Z", "Rx", "Ry", "Rz", "Slider1", "Slider2"];
+            var reasons = axes.ActiveAxes.Select(i => $"{names[i]}={values[i]}").ToList();
+            for (int i = 0; i < 128; i++) if (raw.Buttons[i]) { active = true; reasons.Add($"ボタン{i + 1}"); }
+            for (int i = 0; i < 4; i++) if ((raw.PointOfViewControllers[i] & 0xffff) != 0xffff) { active = true; reasons.Add($"POV{i + 1}={raw.PointOfViewControllers[i]}"); }
+            Status = active ? "操作中: " + string.Join(", ", reasons) : axes.IsCalibrating ? "中立位置の安定待ち（手を離してください）" : "監視中（入力なし）";
+            // Treat calibration as activity so a short idle timeout never dims while learning.
+            active |= axes.IsCalibrating;
             bool report = active || wasActive;
             wasActive = active;
             return report;
         }
         public void Dispose() { device.Unacquire(); device.Dispose(); }
     }
-    [StructLayout(LayoutKind.Sequential)] private struct LastInput { public uint Size, Tick; }
     [StructLayout(LayoutKind.Sequential)] private struct XState
     {
         public uint Packet; public ushort Buttons; public byte LeftTrigger, RightTrigger;
         public short LX, LY, RX, RY;
     }
-    [DllImport("user32.dll")] [return: MarshalAs(UnmanagedType.Bool)] private static extern bool GetLastInputInfo(ref LastInput info);
     [DllImport("xinput1_4.dll")] private static extern uint XInputGetState(uint index, out XState state);
 }

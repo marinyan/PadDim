@@ -20,6 +20,15 @@ public sealed class MainForm : Form
         Padding = new Padding(6, 3, 6, 3), Enabled = false,
         AccessibleDescription = "保存してある元の輝度への復元を再試行します。"
     };
+    private readonly Button calibrateButton = new() { Name = "calibrateButton", Text = "3秒後に中立位置を再取得", AutoSize = true, Padding = new Padding(6, 3, 6, 3) };
+    private bool calibrationPending;
+    private readonly CheckBox checkUpdates = new() { Text = "更新を自動確認する", AutoSize = true };
+    private readonly LinkLabel updateLink = new() { Text = "更新を確認", AutoSize = true, Margin = new Padding(12, 3, 0, 0) };
+    private readonly System.Windows.Forms.Timer updateTimer = new() { Interval = 86400000 };
+    private readonly CancellationTokenSource updateCancellation = new();
+    private readonly AppUpdate updater = new();
+    private UpdateRelease? availableUpdate;
+    private bool updateBusy;
     private readonly NotifyIcon tray;
     private readonly Dimmer dimmer;
     private readonly IdlePolicy idle = new(Environment.TickCount64);
@@ -45,6 +54,7 @@ public sealed class MainForm : Form
         try { settings = Settings.Load(); }
         catch (Exception ex) { settings = new(); MessageBox.Show($"設定を読み込めないため初期値で起動します。\n{ex.Message}", "PadDim"); }
         timeout.Value = settings.IdleSeconds / 60m; darkness.Value = settings.DimPercent; deadzone.Value = settings.DeadzonePercent;
+        checkUpdates.Checked = settings.CheckForUpdates;
         brightness.Value = settings.BrightnessRatioPercent; fadeSeconds.Value = settings.FadeSeconds;
         mode.Items.AddRange(["モニター本体の輝度（DDC/CI・WMI）", "半透明の黒い画面を重ねる", "本体輝度 ＋ 黒いオーバーレイ"]);
         mode.SelectedIndex = settings.UseHardwareBrightness ? settings.UseOverlayWithHardware ? 2 : 0 : 1;
@@ -68,6 +78,9 @@ public sealed class MainForm : Form
         scroll.Controls.Add(layout);
         layout.Controls.Add(new Label { Text = "操作が止まったら、画面を静かに暗く。", Font = new Font(Font.FontFamily, 17, FontStyle.Bold), AutoSize = true, Margin = new Padding(0, 0, 0, 16) });
         layout.Controls.Add(temporarilyDisabled);
+        var updateRow = new FlowLayoutPanel { AutoSize = true, Dock = DockStyle.Fill };
+        updateRow.Controls.Add(checkUpdates); updateRow.Controls.Add(updateLink);
+        layout.Controls.Add(updateRow);
         layout.Controls.Add(Row("減光までの無操作時間（分）", timeout));
         layout.Controls.Add(Row("減光方式", mode));
         layout.Controls.Add(Row("元の輝度に対する割合（%）", brightness));
@@ -77,7 +90,8 @@ public sealed class MainForm : Form
         var buttons = new FlowLayoutPanel { AutoSize = true, Dock = DockStyle.Fill, Margin = new Padding(0, 8, 0, 8) };
         buttons.Controls.Add(Button("設定を保存", (_, _) => SaveSettings()));
         buttons.Controls.Add(Button("減光を試す（5秒保持）", (_, _) => { Restore("プレビュー待機"); previewStartAt = Environment.TickCount64 + 300; }));
-        buttons.Controls.Add(Button("3秒後に中立位置を再取得", (_, _) => CalibrateLater()));
+        calibrateButton.Click += (_, _) => CalibrateLater();
+        buttons.Controls.Add(calibrateButton);
         recoveryButton.Click += (_, _) =>
         {
             // Guard against a completed asynchronous restore since the last UI refresh.
@@ -109,6 +123,25 @@ public sealed class MainForm : Form
         menu.Items.Add("終了", null, (_, _) => { quitting = true; Close(); });
         tray = new NotifyIcon { Icon = Icon, Text = "PadDim — 入力を監視中", ContextMenuStrip = menu, Visible = true };
         tray.DoubleClick += (_, _) => ShowSettings();
+        updateLink.LinkClicked += async (_, _) => { if (availableUpdate is not null) await OfferUpdateAsync(); else await CheckUpdatesAsync(true); };
+        tray.BalloonTipClicked += async (_, _) => { if (availableUpdate is not null) await OfferUpdateAsync(); };
+        updateTimer.Tick += async (_, _) => { if (settings.CheckForUpdates) await CheckUpdatesAsync(false); };
+        if (persistentRecovery)
+        {
+            updateTimer.Start();
+            string updateResult = Path.Combine(Path.GetDirectoryName(Settings.FilePath)!, "update-result.txt");
+            if (File.Exists(updateResult))
+            {
+                try
+                {
+                    string result = File.ReadAllText(updateResult);
+                    File.Delete(updateResult);
+                    if (result != "OK") BeginInvoke(() => MessageBox.Show(this, result, "PadDim の更新"));
+                }
+                catch { /* A read-only profile must not prevent normal monitoring. */ }
+            }
+            if (settings.CheckForUpdates) BeginInvoke(async () => await CheckUpdatesAsync(false));
+        }
         timer.Tick += (_, _) => TickInput();
         SystemEvents.DisplaySettingsChanged += DisplayChanged;
         SystemEvents.SessionSwitch += SessionChanged;
@@ -120,12 +153,20 @@ public sealed class MainForm : Form
         TickInput();
     }
     private long calibrateAt;
-    private void CalibrateLater() { Restore("3秒後に中立位置を取得します"); calibrateAt = Environment.TickCount64 + 3000; }
+    private void CalibrateLater()
+    {
+        if (calibrationPending) return;
+        calibrationPending = true;
+        calibrateButton.Enabled = false;
+        calibrateButton.Text = "再取得待機中…";
+        Restore("3秒後に中立位置を取得します");
+        calibrateAt = Environment.TickCount64 + 3000;
+    }
     private void ApplySensitivity() { input.AxisThreshold = (int)deadzone.Value * 65535 / 100; input.StickDeadzone = (int)deadzone.Value * 32767 / 100; input.Calibrate(); }
     private void SaveSettings()
     {
         timeout.CommitEdit();
-        var updated = new Settings { IdleSeconds = (int)Math.Round(timeout.Value * 60m, MidpointRounding.AwayFromZero), DimPercent = (int)darkness.Value, DeadzonePercent = (int)deadzone.Value, UseHardwareBrightness = mode.SelectedIndex != 1, UseOverlayWithHardware = mode.SelectedIndex == 2, BrightnessRatioPercent = (int)brightness.Value, FadeSeconds = (int)fadeSeconds.Value };
+        var updated = new Settings { IdleSeconds = (int)Math.Round(timeout.Value * 60m, MidpointRounding.AwayFromZero), DimPercent = (int)darkness.Value, DeadzonePercent = (int)deadzone.Value, UseHardwareBrightness = mode.SelectedIndex != 1, UseOverlayWithHardware = mode.SelectedIndex == 2, BrightnessRatioPercent = (int)brightness.Value, FadeSeconds = (int)fadeSeconds.Value, CheckForUpdates = checkUpdates.Checked, SkippedUpdateVersions = settings.SkippedUpdateVersions };
         try { updated.Save(); settings = updated; ApplySensitivity(); Restore("設定を保存しました"); }
         catch (Exception ex) { MessageBox.Show(ex.Message, "設定の保存に失敗しました"); }
     }
@@ -136,6 +177,17 @@ public sealed class MainForm : Form
             long now = Environment.TickCount64;
             if (calibrateAt != 0 && now >= calibrateAt) { input.Calibrate(); calibrateAt = 0; Restore("中立位置を再取得"); }
             string? source = input.Poll(now);
+            if (calibrationPending && calibrateAt == 0)
+            {
+                calibrateButton.Text = "中立位置の安定待ち…";
+                if (!input.IsCalibrating)
+                {
+                    calibrationPending = false;
+                    calibrateButton.Enabled = true;
+                    calibrateButton.Text = "3秒後に中立位置を再取得";
+                    Restore("中立位置の取得完了");
+                }
+            }
             if (source is not null) Restore(source);
             bool monitoring = !temporarilyDisabled.Checked;
             if (fullscreen.Update(FullscreenMonitor.Read(), idle, now))
@@ -163,6 +215,7 @@ public sealed class MainForm : Form
         catch (Exception ex)
         {
             Restore("監視エラー"); timer.Stop(); temporarilyDisabled.Checked = true;
+            calibrateButton.Enabled = false;
             temporarilyDisabled.Enabled = false;
             tray.ContextMenuStrip!.Items[1].Enabled = false;
             devices.Text = $"監視を停止しました。再起動してください。\r\n{ex}";
@@ -171,6 +224,76 @@ public sealed class MainForm : Form
         }
     }
     private void Restore(string source) { dimmer.Restore(); previewUntil = 0; idle.Record(Environment.TickCount64, source); }
+    private async Task CheckUpdatesAsync(bool manual)
+    {
+        if (updateBusy) return;
+        updateBusy = true; updateLink.Enabled = false; updateLink.Text = "更新を確認中…";
+        try
+        {
+            using var timeout = CancellationTokenSource.CreateLinkedTokenSource(updateCancellation.Token);
+            timeout.CancelAfter(TimeSpan.FromSeconds(20));
+            var release = await updater.CheckAsync(timeout.Token);
+            if (IsDisposed || Disposing) return;
+            if (!AppUpdate.ShouldOffer(release, settings.SkippedUpdateVersions))
+            {
+                availableUpdate = null;
+                updateLink.Text = release is null ? "最新版です（再確認）" : $"v{release.Version} はスキップ済み";
+                return;
+            }
+            bool firstNotice = availableUpdate?.Version != release!.Version;
+            availableUpdate = release; updateLink.Text = $"v{release.Version} の変更点・更新";
+            if (manual) { updateBusy = false; await OfferUpdateAsync(); }
+            else if (firstNotice)
+            {
+                string summary = release.Changes.Length > 180 ? release.Changes[..180] + "…" : release.Changes;
+                tray.ShowBalloonTip(10000, $"PadDim v{release.Version} が利用できます", summary + "\nクリックして確認・更新", ToolTipIcon.Info);
+            }
+        }
+        catch (OperationCanceledException) { if (!IsDisposed && !Disposing) updateLink.Text = "更新確認を中断（再試行）"; }
+        catch (Exception ex)
+        {
+            if (!IsDisposed && !Disposing) { updateLink.Text = "更新を確認できません（再試行）"; if (manual) MessageBox.Show(this, ex.Message, "更新確認"); }
+        }
+        finally { updateBusy = false; if (!IsDisposed && !Disposing) updateLink.Enabled = true; }
+    }
+    private async Task OfferUpdateAsync()
+    {
+        if (updateBusy || availableUpdate is not { } release) return;
+        updateBusy = true;
+        try
+        {
+            var choice = MessageBox.Show(this, $"PadDim v{release.Version}\n\n{release.Changes}\n\nダウンロードして更新しますか？\n更新後はタスクトレイに再起動します。\n「いいえ」やキャンセルを選ぶと、このバージョンは今後通知・取得しません。", "PadDim の更新", MessageBoxButtons.YesNoCancel, MessageBoxIcon.Information);
+            if (choice != DialogResult.Yes)
+            {
+                var updated = settings with { SkippedUpdateVersions = [.. settings.SkippedUpdateVersions, release.Version.ToString()] };
+                updated.Save(); settings = updated; availableUpdate = null;
+                updateLink.Text = $"v{release.Version} はスキップ済み";
+                return;
+            }
+            if (!AppUpdate.IsInstalled())
+            {
+                MessageBox.Show(this, "この場所はインストール先として登録されていません。GitHubのインストーラーから更新してください。", "PadDim の更新");
+                return;
+            }
+            updateLink.Enabled = false; updateLink.Text = "更新をダウンロード中…";
+            string installer = await updater.DownloadAsync(release, updateCancellation.Token);
+            if (IsDisposed || Disposing) return;
+            Restore("更新のため終了します");
+            AppUpdate.LaunchInstaller(installer, release);
+            quitting = true; Close();
+        }
+        catch (OperationCanceledException) { }
+        catch (Exception ex) { if (!IsDisposed && !Disposing) MessageBox.Show(this, ex.Message, "更新できませんでした"); }
+        finally
+        {
+            updateBusy = false;
+            if (!IsDisposed && !Disposing)
+            {
+                updateLink.Enabled = true;
+                if (availableUpdate is not null) updateLink.Text = $"v{availableUpdate.Version} の変更点・更新";
+            }
+        }
+    }
     private void ShowSettings() { Restore("設定画面"); Show(); WindowState = FormWindowState.Normal; Activate(); }
     protected override void SetVisibleCore(bool value)
     {
@@ -204,7 +327,9 @@ public sealed class MainForm : Form
     {
         if (disposing)
         {
-            timer.Stop(); timer.Dispose(); recoveryTimer.Stop(); recoveryTimer.Dispose(); dimmer.Dispose();
+            timer.Stop(); timer.Dispose(); recoveryTimer.Stop(); recoveryTimer.Dispose();
+            updateTimer.Stop(); updateTimer.Dispose(); updateCancellation.Cancel();
+            dimmer.Dispose();
             SystemEvents.DisplaySettingsChanged -= DisplayChanged;
             SystemEvents.SessionSwitch -= SessionChanged;
             SystemEvents.PowerModeChanged -= PowerChanged;

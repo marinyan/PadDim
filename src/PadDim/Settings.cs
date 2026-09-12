@@ -11,6 +11,8 @@ public sealed record Settings
     // A distinct key avoids interpreting a legacy absolute setting as a relative ratio.
     public int BrightnessRatioPercent { get; init; } = 20;
     public int FadeSeconds { get; init; } = 3;
+    public bool CheckForUpdates { get; init; } = true;
+    public string[] SkippedUpdateVersions { get; init; } = [];
     public static string FilePath => Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "PadDim", "settings.json");
     public static Settings Load()
     {
@@ -18,7 +20,7 @@ public sealed record Settings
         return FromJson(File.ReadAllText(FilePath));
     }
     public static Settings FromJson(string json) => (JsonSerializer.Deserialize<Settings>(json) ?? new()).Validated();
-    public Settings Validated() => this with { IdleSeconds = Math.Clamp(IdleSeconds, 10, 86400), DimPercent = Math.Clamp(DimPercent, 5, 90), DeadzonePercent = Math.Clamp(DeadzonePercent, 1, 40), BrightnessRatioPercent = Math.Clamp(BrightnessRatioPercent, 0, 100), FadeSeconds = Math.Clamp(FadeSeconds, 0, 60) };
+    public Settings Validated() => this with { SkippedUpdateVersions = (SkippedUpdateVersions ?? []).Distinct().ToArray(), IdleSeconds = Math.Clamp(IdleSeconds, 10, 86400), DimPercent = Math.Clamp(DimPercent, 5, 90), DeadzonePercent = Math.Clamp(DeadzonePercent, 1, 40), BrightnessRatioPercent = Math.Clamp(BrightnessRatioPercent, 0, 100), FadeSeconds = Math.Clamp(FadeSeconds, 0, 60) };
     public void Save()
     {
         Directory.CreateDirectory(Path.GetDirectoryName(FilePath)!);
