@@ -127,7 +127,7 @@ public sealed class MainForm : Form
         menu.Items.Add(pause);
         menu.Items.Add("終了", null, (_, _) => { quitting = true; Close(); });
         tray = new NotifyIcon { Icon = Icon, Text = "PadDim — 入力を監視中", ContextMenuStrip = menu, Visible = true };
-        tray.DoubleClick += (_, _) => ShowSettings();
+        tray.MouseClick += (_, e) => { if (e.Button == MouseButtons.Left) ShowSettings(); };
         updateLink.LinkClicked += async (_, _) => { if (availableUpdate is not null) await OfferUpdateAsync(); else await CheckUpdatesAsync(true); };
         tray.BalloonTipClicked += async (_, _) => { if (availableUpdate is not null) await OfferUpdateAsync(); };
         updateTimer.Tick += async (_, _) => { if (settings.CheckForUpdates) await CheckUpdatesAsync(false); };
