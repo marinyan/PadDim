@@ -12,6 +12,7 @@ public sealed record Settings
     public int BrightnessRatioPercent { get; init; } = 20;
     public int FadeSeconds { get; init; } = 3;
     public bool CheckForUpdates { get; init; } = true;
+    public bool UseSystemInputTime { get; init; }
     public string[] SkippedUpdateVersions { get; init; } = [];
     public static string FilePath => Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "PadDim", "settings.json");
     public static Settings Load()

@@ -15,6 +15,7 @@ public sealed class InputMonitor : IDisposable
     private readonly bool[] xWasActive = new bool[4];
     public bool Healthy { get; private set; } = true;
     public bool IsCalibrating => pads.Values.Any(p => p.IsCalibrating);
+    public bool UseSystemInputTime { get => desktop.UseSystemInputTime; set => desktop.UseSystemInputTime = value; }
     public string Status { get; private set; } = "接続を確認中";
     public int AxisThreshold { get; set; } = 4000;
     public int StickDeadzone { get; set; } = 8000;
@@ -28,8 +29,9 @@ public sealed class InputMonitor : IDisposable
         var lines = new List<string>();
         var desktopActivity = desktop.Poll();
         if (desktopActivity is not null) activities.Add(desktopActivity);
-        if (!desktop.Healthy) { Healthy = false; lines.Add("キーボード / マウス: 取得失敗"); }
-        else lines.Add($"キーボード / マウス: {(desktopActivity is null ? "入力なし" : desktopActivity + "の入力を検出")}");
+        if (!desktop.Healthy) { Healthy = false; lines.Add("キーボード / マウス / タッチ / ペン: 取得失敗"); }
+        else lines.Add($"キーボード / マウス / タッチ / ペン: {(desktopActivity is null ? "入力なし" : desktopActivity + "の入力を検出")}");
+        lines.Add($"入力時刻による補助検出: {(UseSystemInputTime ? "ON" : "OFF")}");
 
         for (uint slot = 0; slot < 4; slot++)
         {

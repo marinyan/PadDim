@@ -23,6 +23,7 @@ public sealed class MainForm : Form
     private readonly Button calibrateButton = new() { Name = "calibrateButton", Text = "3秒後に中立位置を再取得", AutoSize = true, Padding = new Padding(6, 3, 6, 3) };
     private bool calibrationPending;
     private readonly CheckBox checkUpdates = new() { Text = "更新を自動確認する", AutoSize = true };
+    private readonly CheckBox systemInputTime = new() { Text = "タッチ・リモート入力の補助検出", AutoSize = true };
     private readonly LinkLabel updateLink = new() { Text = "更新を確認", AutoSize = true, Margin = new Padding(12, 3, 0, 0) };
     private readonly System.Windows.Forms.Timer updateTimer = new() { Interval = 86400000 };
     private readonly CancellationTokenSource updateCancellation = new();
@@ -55,6 +56,7 @@ public sealed class MainForm : Form
         catch (Exception ex) { settings = new(); MessageBox.Show($"設定を読み込めないため初期値で起動します。\n{ex.Message}", "PadDim"); }
         timeout.Value = settings.IdleSeconds / 60m; darkness.Value = settings.DimPercent; deadzone.Value = settings.DeadzonePercent;
         checkUpdates.Checked = settings.CheckForUpdates;
+        systemInputTime.Checked = settings.UseSystemInputTime;
         brightness.Value = settings.BrightnessRatioPercent; fadeSeconds.Value = settings.FadeSeconds;
         mode.Items.AddRange(["モニター本体の輝度（DDC/CI・WMI）", "半透明の黒い画面を重ねる", "本体輝度 ＋ 黒いオーバーレイ"]);
         mode.SelectedIndex = settings.UseHardwareBrightness ? settings.UseOverlayWithHardware ? 2 : 0 : 1;
@@ -78,6 +80,8 @@ public sealed class MainForm : Form
         scroll.Controls.Add(layout);
         layout.Controls.Add(new Label { Text = "操作が止まったら、画面を静かに暗く。", Font = new Font(Font.FontFamily, 17, FontStyle.Bold), AutoSize = true, Margin = new Padding(0, 0, 0, 16) });
         layout.Controls.Add(temporarilyDisabled);
+        layout.Controls.Add(systemInputTime);
+        layout.Controls.Add(new Label { AutoSize = true, MaximumSize = new Size(640, 0), Text = "タッチ操作で明るさが戻らない場合に有効にして、設定を保存してください。\nパッドの種類・モードによって無操作でも減光しなくなる場合はOFFにしてください。", Margin = new Padding(0, 0, 0, 8) });
         var updateRow = new FlowLayoutPanel { AutoSize = true, Dock = DockStyle.Fill };
         updateRow.Controls.Add(checkUpdates); updateRow.Controls.Add(updateLink);
         layout.Controls.Add(updateRow);
@@ -108,6 +112,7 @@ public sealed class MainForm : Form
         layout.Controls.Add(new Label { Text = "入力の監視状況（同じ機器が両APIに表示される場合があります）", AutoSize = true, Margin = new Padding(0, 14, 0, 6) });
         layout.Controls.Add(devices);
         input = new InputMonitor(Handle);
+        input.UseSystemInputTime = settings.UseSystemInputTime;
         ApplySensitivity();
         var menu = new ContextMenuStrip();
         menu.Items.Add("設定を開く", null, (_, _) => ShowSettings());
@@ -167,7 +172,8 @@ public sealed class MainForm : Form
     {
         timeout.CommitEdit();
         var updated = new Settings { IdleSeconds = (int)Math.Round(timeout.Value * 60m, MidpointRounding.AwayFromZero), DimPercent = (int)darkness.Value, DeadzonePercent = (int)deadzone.Value, UseHardwareBrightness = mode.SelectedIndex != 1, UseOverlayWithHardware = mode.SelectedIndex == 2, BrightnessRatioPercent = (int)brightness.Value, FadeSeconds = (int)fadeSeconds.Value, CheckForUpdates = checkUpdates.Checked, SkippedUpdateVersions = settings.SkippedUpdateVersions };
-        try { updated.Save(); settings = updated; ApplySensitivity(); Restore("設定を保存しました"); }
+        updated = updated with { UseSystemInputTime = systemInputTime.Checked };
+        try { updated.Save(); settings = updated; input.UseSystemInputTime = settings.UseSystemInputTime; ApplySensitivity(); Restore("設定を保存しました"); }
         catch (Exception ex) { MessageBox.Show(ex.Message, "設定の保存に失敗しました"); }
     }
     private void TickInput()

@@ -114,6 +114,7 @@ RecoveryTests.Run();
 FullscreenTests.Run();
 CalibrationTests.Run();
 UpdateTests.Run();
+PointerTests.Run();
 
 sealed class FakeTarget(uint original) : IBrightnessTarget
 {
